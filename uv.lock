@@ -717,6 +717,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "docling" },
     { name = "pydantic" },
+    { name = "requests" },
     { name = "sentence-transformers" },
     { name = "transformers" },
 ]
@@ -726,6 +727,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=1.5.9" },
     { name = "docling", specifier = ">=2.122.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "requests", specifier = ">=2.31.0" },
     { name = "sentence-transformers", specifier = ">=6.0.0" },
     { name = "transformers", specifier = ">=5.8.1" },
 ]

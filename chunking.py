@@ -4,29 +4,18 @@ from typing import Any, Dict, List, Optional
 import chromadb
 from chromadb.utils import embedding_functions
 
-from docling.chunking import HybridChunker
-from docling.document_converter import DocumentConverter
-from docling_core.transforms.chunker.tokenizer.huggingface import (
-    HuggingFaceTokenizer,
-)
-
-from transformers import AutoTokenizer
-
-
-EMBED_MODEL_ID = "BAAI/bge-small-en-v1.5"
-MAX_TOKENS = 500
-
 
 class VectorDatabase:
-    """Persistent ChromaDB manager for Docling chunks."""
 
     def __init__(
         self,
         db_path: str = "./vector_db",
         collection_name: str = "docling_paper",
-        embedding_model_id: str = EMBED_MODEL_ID,
+        embedding_model_id: str = "BAAI/bge-small-en-v1.5",
     ):
-        self.client = chromadb.PersistentClient(path=db_path)
+        self.client = chromadb.PersistentClient(
+            path=db_path
+        )
 
         self.embedding_fn = (
             embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -40,51 +29,125 @@ class VectorDatabase:
             metadata={"hnsw:space": "cosine"},
         )
 
+    def document_exists(
+        self,
+        document_hash: str,
+    ) -> bool:
+
+        results = self.collection.get(
+            where={
+                "document_hash": document_hash
+            },
+            limit=1,
+        )
+
+        return len(results["ids"]) > 0
+
     @staticmethod
-    def _sanitize_metadata(chunk: Any) -> Dict[str, Any]:
-        """Convert Docling metadata into Chroma-compatible values."""
+    def calculate_hash(
+        content: bytes,
+    ) -> str:
+
+        return hashlib.sha256(content).hexdigest()
+
+
+
+    @staticmethod
+    def _sanitize_metadata(
+        chunk: Any,
+        source_name: str,
+        document_hash: str,
+    ) -> Dict[str, Any]:
 
         page_numbers = []
 
-        doc_items = getattr(chunk.meta, "doc_items", [])
+        doc_items = getattr(
+            chunk.meta,
+            "doc_items",
+            [],
+        )
 
         for item in doc_items:
-            provenance = getattr(item, "prov", [])
+
+            provenance = getattr(
+                item,
+                "prov",
+                [],
+            )
 
             for prov in provenance:
-                page_no = getattr(prov, "page_no", None)
+
+                page_no = getattr(
+                    prov,
+                    "page_no",
+                    None,
+                )
 
                 if page_no is not None:
                     page_numbers.append(page_no)
 
-        page_numbers = sorted(set(page_numbers))
+        page_numbers = sorted(
+            set(page_numbers)
+        )
 
-        headings = getattr(chunk.meta, "headings", [])
-        title = headings[0] if headings else "Untitled"
+        headings = getattr(
+            chunk.meta,
+            "headings",
+            [],
+        )
 
-        origin = getattr(chunk.meta, "origin", None)
+        title = (
+            headings[0]
+            if headings
+            else "Untitled"
+        )
+
+        origin = getattr(
+            chunk.meta,
+            "origin",
+            None,
+        )
+
         filename = (
-            getattr(origin, "filename", "unknown")
+            getattr(
+                origin,
+                "filename",
+                source_name,
+            )
             if origin
-            else "unknown"
+            else source_name
         )
 
         return {
             "filename": filename,
             "title": title,
-            "page_numbers": ", ".join(map(str, page_numbers)),
-            "start_page": page_numbers[0] if page_numbers else -1,
-            "end_page": page_numbers[-1] if page_numbers else -1,
+            "page_numbers": ", ".join(
+                map(str, page_numbers)
+            ),
+            "start_page": (
+                page_numbers[0]
+                if page_numbers
+                else -1
+            ),
+            "end_page": (
+                page_numbers[-1]
+                if page_numbers
+                else -1
+            ),
+
+            # IMPORTANT
+            "document_hash": document_hash,
         }
 
     @staticmethod
     def _generate_chunk_id(
-        source_name: str,
+        document_hash: str,
         text: str,
     ) -> str:
-        """Create deterministic ID from source and chunk content."""
 
-        content = f"{source_name}:{text}"
+        content = (
+            f"{document_hash}:{text}"
+        )
 
         digest = hashlib.sha256(
             content.encode("utf-8")
@@ -96,8 +159,12 @@ class VectorDatabase:
         self,
         chunks: List[Any],
         source_name: str,
+        document_hash: str,
         batch_size: int = 100,
     ) -> None:
+
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero.")
 
         ids = []
         documents = []
@@ -107,24 +174,29 @@ class VectorDatabase:
 
             text = chunk.text.strip()
 
-            # Ignore empty chunks
             if not text:
                 continue
 
             chunk_id = self._generate_chunk_id(
-                source_name,
+                document_hash,
                 text,
             )
 
-            metadata = self._sanitize_metadata(chunk)
+            metadata = self._sanitize_metadata(
+                chunk,
+                source_name,
+                document_hash,
+            )
 
             ids.append(chunk_id)
             documents.append(text)
             metadatas.append(metadata)
 
-        total_chunks = len(ids)
-
-        for start in range(0, total_chunks, batch_size):
+        for start in range(
+            0,
+            len(ids),
+            batch_size,
+        ):
 
             end = start + batch_size
 
@@ -136,7 +208,7 @@ class VectorDatabase:
 
         print(
             f"Successfully upserted "
-            f"{total_chunks} chunks into ChromaDB."
+            f"{len(ids)} chunks."
         )
 
     def search(
@@ -146,15 +218,15 @@ class VectorDatabase:
         where_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
 
+        # OPTIMIZATION: BGE models require this exact prefix for queries
+        bge_prefix = "Represent this sentence for searching relevant passages: "
+        formatted_query = f"{bge_prefix}{query}"
+
         results = self.collection.query(
-            query_texts=[query],
+            query_texts=[formatted_query], # Pass the formatted query
             n_results=n_results,
             where=where_filter,
-            include=[
-                "documents",
-                "metadatas",
-                "distances",
-            ],
+            include=["documents", "metadatas", "distances"],
         )
 
         output = []
@@ -162,76 +234,24 @@ class VectorDatabase:
         if not results["ids"]:
             return output
 
-        for i, chunk_id in enumerate(results["ids"][0]):
+        for i, chunk_id in enumerate(
+            results["ids"][0]
+        ):
 
-            distance = results["distances"][0][i]
-
-            output.append(
-                {
-                    "id": chunk_id,
-                    "content": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": distance,
-                    "similarity": 1 - distance,
-                }
+            distance = (
+                results["distances"][0][i]
             )
 
+            output.append({
+                "id": chunk_id,
+                "content": (
+                    results["documents"][0][i]
+                ),
+                "metadata": (
+                    results["metadatas"][0][i]
+                ),
+                "distance": distance,
+                "similarity": 1 - distance,
+            })
+
         return output
-
-
-# ============================================================
-# DOCUMENT INGESTION
-# ============================================================
-def ingest_document(doc_url: str) -> None:
-# 1. Create tokenizer used by Docling's chunker
-
-    hf_tokenizer = AutoTokenizer.from_pretrained(
-        EMBED_MODEL_ID
-    )
-
-    docling_tokenizer = HuggingFaceTokenizer(
-        tokenizer=hf_tokenizer,
-        max_tokens=MAX_TOKENS,
-    )
-
-# 2. Create HybridChunker
-
-    chunker = HybridChunker(
-        tokenizer=docling_tokenizer,
-        merge_peers=True,
-    )
-
-# 3. Convert document
-
-    converter = DocumentConverter()
-
-    result = converter.convert(doc_url)
-
-    # 4. Create Docling chunks
-
-    chunks = list(
-        chunker.chunk(result.document)
-    )
-
-    print(f"Created {len(chunks)} chunks.")
-
-
-    # ============================================================
-    # VECTOR DATABASE
-    # ============================================================
-
-    db = VectorDatabase(
-        db_path="./vector_db",
-        collection_name="docling_paper",
-        embedding_model_id=EMBED_MODEL_ID,
-    )
-
-    # 5. Store chunks
-
-    db.add_docling_chunks(
-        chunks,
-        source_name="arxiv_2408.09869",
-    )
-
-
-

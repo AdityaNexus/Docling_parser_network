@@ -1,22 +1,20 @@
-from chunking import ingest_document
+from ingestion import add_document
 from search import DocumentSearcher
 
 
 def main(url: str):
 
-    # Ingest document
-    ingest_document(url)
+    # Add only if this is a new document
+    add_document(url)
 
-    print("Document ingested successfully.")
-
-    # Create searcher ONCE
+    # Create searcher once
     searcher = DocumentSearcher()
 
-    # Keep searching using the same object
     while True:
 
         query = input(
-            "\nEnter your query (or type 'exit' to quit): "
+            "\nEnter your query "
+            "(or type 'exit' to quit): "
         ).strip()
 
         if query.lower() == "exit":
@@ -27,31 +25,38 @@ def main(url: str):
 
         results = searcher.search(query)
 
-        if results:
-
-            for result in results:
-
-                print(
-                    f"\nSimilarity: "
-                    f"{result['similarity']:.4f}"
-                )
-
-                print(
-                    f"Metadata: "
-                    f"{result['metadata']}"
-                )
-
-                print(
-                    f"Content: "
-                    f"{result['content']}"
-                )
-
-        else:
+        if not results:
             print("No results found.")
+            continue
+
+        for i, result in enumerate(
+            results,
+            start=1,
+        ):
+
+            print(f"\n--- Result {i} ---")
+
+            print(
+                f"Similarity: "
+                f"{result['similarity']:.4f}"
+            )
+
+            print(
+                f"Metadata: "
+                f"{result['metadata']}"
+            )
+
+            print(
+                f"Content:\n"
+                f"{result['content']}"
+            )
 
 
 if __name__ == "__main__":
 
-    url = input("Enter document URL: ")
+    url = input("Enter document URL: ").strip()
+
+    if not url:
+        raise SystemExit("A document URL is required.")
 
     main(url)

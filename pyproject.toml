@@ -8,6 +8,7 @@ dependencies = [
     "chromadb>=1.5.9",
     "docling>=2.122.0",
     "pydantic>=2.13.4",
+    "requests>=2.31.0",
     "sentence-transformers>=6.0.0",
     "transformers>=5.8.1",
 ]
